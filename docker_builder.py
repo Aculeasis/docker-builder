@@ -258,7 +258,7 @@ def generate_builds(cfg, targets_all):
                 continue
         tags = _git_get_tags(git_path, cfg)
         for target in targets['targets']:
-            is_change = cfg['force'] or change_files is None or __list_in_list(target['triggers'], change_files)
+            is_change = cfg['force'] or change_files is None or __list_in_list(target.get('triggers', []), change_files)
             main_name = '{}/{}'.format(cfg['user'], target['registry']) if cfg['user'] else target['registry']
             for build in target['build']:
                 is_change = is_change or build[0] in change_files
