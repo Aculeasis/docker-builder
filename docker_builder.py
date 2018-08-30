@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 
-import subprocess
 import os
 import shutil
+import socket
+import subprocess
+import threading
 
+import docker  # pip3 install docker
 
 # DEF_TARGETS = [
 #     # ссылка на гит
@@ -47,6 +50,71 @@ import shutil
 # FIXME: Очень страшный TARGETS, надо переделать.
 
 DEF_TAGS = {'arch': '', 'c_full': '', 'c_short': '', 'tag': '', 'tag_full': ''}
+
+
+class Build:
+    # TODO: Узнать почему (stdout=subprocess.PIPE, stderr=subprocess.PIPE) не дают докербилду доделать образ
+    # TODO: Он вроде и собирается, но в локальный регистр не попадает.
+    def __init__(self, tag, path, w_dir):
+        self._tag = tag
+        self._path = path
+        self._w_dir = w_dir
+        self._th = threading.Thread(target=self._run)
+        self._status = None
+        self.err = ''
+        self._join_me = False
+        self._th.start()
+
+    def status(self):
+        if self._join_me:
+            self._join_me = False
+            self._th.join()
+        return self._status
+
+    def _run(self):
+        client = docker.from_env()
+        try:
+            client.images.build(tag=self._tag, dockerfile=self._path, path=self._w_dir, rm=True)
+        except TypeError as e:
+            self.err = str(e)
+            self._status = 1
+        else:
+            self._status = 0
+        self._join_me = True
+
+
+class Push:
+    def __init__(self, tag):
+        self._repository, self._tag = tag.rsplit(':', 1)
+        self._th = threading.Thread(target=self._run)
+        self._status = None
+        self.err = ''
+        self._join_me = False
+        self._th.start()
+
+    def status(self):
+        if self._join_me:
+            self._join_me = False
+            self._th.join()
+        return self._status
+
+    def _run(self):
+        client = docker.from_env()
+        push_try = 2
+        while push_try:
+            try:
+                self.err = client.images.push(repository=self._repository, tag=self._tag)
+            except socket.timeout:
+                push_try -= 1
+                if not push_try:
+                    self.err += ' socket error'
+                    self._status = 1
+                    break
+                print('Error push {}:{}. Retry {}'.format(self._repository, self._tag, push_try))
+            else:
+                self._status = 0
+                break
+        self._join_me = True
 
 
 def _get_run_stdout(cmd: list, fatal: bool) -> str:
