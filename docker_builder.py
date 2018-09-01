@@ -8,70 +8,34 @@ import threading
 
 import docker  # pip3 install docker
 
-# DEF_TARGETS = [
-#     # ссылка на гит
-#     {'git': 'https://github.com/Aculeasis/mdmt2-docker',
-#      # Директория в work_dir. Если это уже гит репа то сделать pull, если нет (удалить если есть) и сделать clone
-#      'dir': 'mdmt2-docker',
-#      # список целей из репа
-#      'targets': [
-#          # Лист из диктов. registry: регистр на хабе.
-#          # triggers: список из файлов триггеров, их обновление также запустит сборку. Может быть опущен
-#          # build: список из список типа [файл докера, таг]
-#          # В таге можно юзать {}: {arch} - архитекрута в терминологии докера amd64, arm64v8, arm32v7 или unknown
-#          # {c_full} - полный хеш коммита, например dc361791f21a4132dcf4f385b69c4448fa9a48c1
-#          # {c_short} - сокращенный хеш, например dc36179
-#          # {tag} - таг, например 0.7.1
-#          # {tag_full} - полный таг, например 0.7.1-1-gdc36179
-#          # При pull соберутся только измененные файлы, при clone - все
-#             {
-#                 'registry': 'mdmt2', 'triggers': [],
-#                 'build': [
-#                     ['Dockerfile.amd64', '{arch}'],
-#                     ['Dockerfile.arm64v8', '{arch}'],
-#                     ['Dockerfile.arm32v7', '{arch}'],
-#                 ]
-#             },
-#             {
-#                 'registry': 'mdmt2_rhvoice', 'triggers': [],
-#                 'build': [
-#                     ['Dockerfile_rhvoice.amd64', '{arch}'],
-#                     ['Dockerfile_rhvoice.arm64v8', '{arch}'],
-#                     ['Dockerfile_rhvoice.arm32v7', '{arch}']
-#                 ]
-#             },
-#      ]
-#      },
-#     ]
-
 
 # TODO: Обработка зависимостей, например 'depends'=[] список зависимостей типа индекс\имя, индекс\имя. Хз как лучше.
 # TODO: Переписать работу с докером с subprocess на docker
 # FIXME: Очень страшный TARGETS, надо переделать.
 
-DEF_TAGS = {'arch': '', 'c_full': '', 'c_short': '', 'tag': '', 'tag_full': ''}
+DEF_TAGS = {        # Подстановки доступные в теге:
+    'arch': '',     # Архитектура системы где запущен скрипт: amd64, arm64v8, arm32v7 или unknown
+    'c_full': '',   # Хеш последнего комитта из git-репа, например dc361791f21a4132dcf4f385b69c4448fa9a48c1
+    'c_short': '',  # Короткий вариант 'c_full', например dc36179
+    'tag': '',      # Актуальный тег из git-репа, если нет вернет пустую строку. Например 0.7.1
+    'tag_full': ''  # Полная версия 'tag', например 0.7.1-1-gdc36179
+}                   # Примеры: '{arch}-{tag}' -> 'arm64v8-0.7.1', 'build_{c_short}' -> 'build_dc36179' и т.д.
 
 
-class Build:
-    # TODO: Узнать почему (stdout=subprocess.PIPE, stderr=subprocess.PIPE) не дают докербилду доделать образ
-    # TODO: Он вроде и собирается, но в локальный регистр не попадает.
+class Build(threading.Thread):
     def __init__(self, tag, path, w_dir):
+        super().__init__()
         self._tag = tag
         self._path = path
         self._w_dir = w_dir
-        self._th = threading.Thread(target=self._run)
         self._status = None
         self.err = ''
-        self._join_me = False
-        self._th.start()
+        self.start()
 
     def status(self):
-        if self._join_me:
-            self._join_me = False
-            self._th.join()
         return self._status
 
-    def _run(self):
+    def run(self):
         client = docker.from_env()
         try:
             client.images.build(tag=self._tag, dockerfile=self._path, path=self._w_dir, rm=True)
@@ -80,46 +44,37 @@ class Build:
             self._status = 1
         else:
             self._status = 0
-        self._join_me = True
 
 
-class Push:
+class Push(threading.Thread):
     def __init__(self, tag):
+        super().__init__()
         self._repository, self._tag = tag.rsplit(':', 1)
-        self._th = threading.Thread(target=self._run)
         self._status = None
         self.err = ''
-        self._join_me = False
-        self._th.start()
+        self.start()
 
     def status(self):
-        if self._join_me:
-            self._join_me = False
-            self._th.join()
         return self._status
 
-    def _run(self):
+    def run(self):
         client = docker.from_env()
-        push_try = 2
-        while push_try:
+        for retry in range(1, 3):
             try:
                 self.err = client.images.push(repository=self._repository, tag=self._tag)
             except socket.timeout:
-                push_try -= 1
-                if not push_try:
-                    self.err += ' socket error'
-                    self._status = 1
-                    break
-                print('Error push {}:{}. Retry {}'.format(self._repository, self._tag, push_try))
+                print('Error push {}:{}. Retry {}'.format(self._repository, self._tag, retry))
             else:
                 self._status = 0
                 break
-        self._join_me = True
+        if self._status is None:
+            self.err += ' socket error'
+            self._status = 1
 
 
 def _get_run_stdout(cmd: list, fatal: bool) -> str:
     run = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    if run.returncode != 0:
+    if run.returncode:
         print('Get error {} from \'{}\': {}'.format(run.returncode, ' '.join(run.args), run.stderr))
         print('Output logs:')
         for l in run.stdout.split('\n')[-5:]:
@@ -130,6 +85,10 @@ def _get_run_stdout(cmd: list, fatal: bool) -> str:
 
 
 def _get_arch() -> str:
+    """
+    Определяет архитектуру системы.
+    :return: архитектура системы или 'unknown'
+    """
     aarch = {'x86_64': 'amd64', 'aarch64': 'arm64v8', 'armv7l': 'arm32v7'}
     arch = _get_run_stdout(['uname', '-m'], True)
     if arch not in aarch:  # Тогда вот так
@@ -157,7 +116,7 @@ def _get_arch_from_dockerfile(path) -> str:
 def _is_git(path) -> bool:
     # гит или не гит
     run = subprocess.run(['git', '-C', path, 'status'], stderr=subprocess.PIPE, stdout=subprocess.PIPE)
-    return run.returncode == 0
+    return not run.returncode
 
 
 def _git_clone(url, path) -> bool:
@@ -193,14 +152,14 @@ def _git_pull(path) -> list:
 
 def _git_get_full_hash(path) -> str:
     run = subprocess.run(['git', '-C', path, 'log', '-n', '1'], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    if run.returncode == 0:
+    if not run.returncode:
         # commit 2a2f3f60c7bc168c3121c07fefc84bedf9ed4abd\n -> 2a2f3f60c7bc168c3121c07fefc84bedf9ed4abd or ''
         return run.stdout.decode().split('\n')[0].split(' ')[-1]
     return ''
 
 
-def _git_get_tags(path, cfg) -> dict:
-    # вернет заполненные таги
+def _git_get_tags(path: str, cfg: dict) -> dict:
+    # вернет заполненные теги
     def get_run(cmd_: list) -> subprocess.run:
         cmd = ['git', '-C', path]
         return subprocess.run(cmd + cmd_, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
@@ -210,16 +169,16 @@ def _git_get_tags(path, cfg) -> dict:
     tags['c_full'] = _git_get_full_hash(path)
     if tags['c_full']:
         run = get_run(['rev-parse', '--short=7', tags['c_full']])
-        if run.returncode == 0:
+        if not run.returncode:
             # 2a2f3f60c7bc168c3121c07fefc84bedf9ed4abd -> 2a2f3f6
             tags['c_short'] = run.stdout.decode().strip('\n')
     run = get_run(['describe', ])
-    if run.returncode == 0:
+    if not run.returncode:
         # 0.7.1-1-gdc36179
         tags['tag_full'] = run.stdout.decode().strip('\n')
     if tags['tag_full']:
         run = get_run(['describe', '--abbrev=0'])
-        if run.returncode == 0:
+        if not run.returncode:
             # 0.7.1
             tags['tag'] = run.stdout.decode().strip('\n')
     return tags
@@ -236,20 +195,19 @@ def __docker_run_fatal(cmd2: list, fatal: bool = True):
 
 
 def _docker_login(path, cfg):
-    # читаем логин пасс и логинимся. Думаю не стоит их принтить
+    # Читаем логин пасс из файла и логинимся.
     with open(path, encoding='utf8') as f:
-        data = f.readline().strip('\n'). split(' ', 1)
+        data = [l.strip() for l in f.readline().strip('\n').split(' ', 1)]
     if len(data) != 2:
         raise RuntimeError('Bad credentials, file {}, len={}!=2'.format(path, len(data)))
     run = subprocess.run(
-        ['docker', 'login', '-u', data[0].strip(), '-p', data[1].strip()],
+        ['docker', 'login', '-u', data[0], '-p', data[1]],
         stderr=subprocess.PIPE,
         stdout=subprocess.PIPE
     )
-    cfg['user'] = data[0].strip()
+    cfg['user'] = data[0]
     if run.returncode:
         raise RuntimeError('Error docker login: {}'.format(run.stderr.decode()))
-    pass
 
 
 def docker_logout():
@@ -263,7 +221,7 @@ def _docker_containers():
 
 
 def _docker_images():
-    # Вернет список из [ид образа, реп:таг], docker images --format "{{.ID}} {{.Repository}}:{{.Tag}}
+    # Вернет список из [ид образа, реп:тег], docker images --format "{{.ID}} {{.Repository}}:{{.Tag}}
     run = __docker_run_fatal(['images', '--format', '{{.ID}} {{.Repository}}:{{.Tag}}'])
     return [line.split(' ', 1) for line in run.stdout.decode().split('\n') if len(line) > 2]
 
@@ -275,7 +233,7 @@ def _docker_prune_container(name: str):
 
 
 def docker_prune_image(name: str, fatal: bool = True):
-    # Удалит образ по реп:таг
+    # Удалит образ по реп:тег
     __docker_run_fatal(['rmi', name], fatal)
 
 
@@ -374,13 +332,13 @@ def generate_builds(cfg, targets_all):
 
 
 def docker_prune(targets: list):
-    # Удалить контейнеры и образы из списка реп:таг.
+    # Удалить контейнеры и образы из списка реп:тег.
     # Ошибок быть не должно, вообще.
     # Чекает первый элемент, т.е. тоже что вернул generate_builds
     containers = _docker_containers()
     images_ = _docker_images()
 
-    # Заменяем ид образа у контейнеров на реп:таг. реп:таг всех образов в один список
+    # Заменяем ид образа у контейнеров на реп:тег. реп:тег всех образов в один список
     images = []
     for image in images_:
         for container in containers:

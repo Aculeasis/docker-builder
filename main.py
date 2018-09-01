@@ -5,34 +5,41 @@ import time
 import docker_builder
 
 CFG = {
-    # каталог где есть\будут лежать все репы
+    # Каталог где есть\будут лежать git-репы.
     'work_dir': '/root',
-    # Его перезапишет при логине.
+    # ID в хабе. Если auto_push: True то перезапишет при логине.
     'user': '',
-    # файл с login pass от хаба в work_dir. Если начинается с / то абсолютный путь.
+    # Файл с login pass от хаба в work_dir. Если начинается с / то абсолютный путь.
+    # Логинимся только с auto_push: True.
     'credentials': '.docker_credentials',
-    # Автоматически определять архитектуру докерфайлов по FROM и игнорировать неподдерживаемые
+    # Автоматически определять архитектуру докерфайлов по FROM и игнорировать неподдерживаемые.
     'arch_detect': True,
-    # Пушить образы в хаб
+    # Пушить образы в хаб.
     'auto_push': True,
     # Удалить запушенные образы.
     'remove_after_push': True,
-    # !!!: Файлы будут удалены сразу а не в самом конце. Сломает зависимости сборки, если они есть
+    # !!!: Файлы будут удалены сразу а не в самом конце. Сломает зависимости сборки, если они есть.
     'remove_fast': False,
-    # Потоков сборки
+    # Потоков сборки.
     'max_build_t': 2,
     # Потоков пуша
     'max_push_t': 2,
-    # Принудительно пересобрать образы
+    # Принудительно пересобрать образы.
     'force': False,
 }
 
 TARGETS = [
-    {'git': 'https://github.com/Aculeasis/mdmt2-docker',
+    {'git': 'https://github.com/Aculeasis/mdmt2-docker',  # Ссылка на гит.
+     # Директория в work_dir. Если это уже гит репа то сделать pull, если нет (удалить если есть) и сделать clone.
+     # При clone будут пересобраны все цели, при pull только измененные.
      'dir': 'mdmt2-docker',
+     # Список целей из репа.
      'targets': [
-         {
+         {   # registry - регистр на хабе.
+             # triggers: список из файлов-триггеров, их обновление также активирует сборку. Может быть опущен.
              'registry': 'mdmt2', 'triggers': ['crutch.py', 'entrypoint.sh'],
+             # build: список из списков [файл докера, тег].
+             # В теге возможны подстановки, см. DEF_TAGS.
              'build': [
                  ['Dockerfile.amd64',   '{arch}'],
                  ['Dockerfile.arm64v8', '{arch}'],
@@ -131,7 +138,7 @@ class Builder:
         while check:
             check = False
             for el in range(0, len(src)):
-                if src[el][0].status() is not None:  # Завершился
+                if src[el][0].status() is not None:
                     i = src.pop(el)
                     if not i[0].status():
                         print('{} {} successful in {} sec'.format(name, i[1], int(time.time() - i[2])))
