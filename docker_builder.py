@@ -38,7 +38,7 @@ class Build(threading.Thread):
     def run(self):
         client = docker.from_env()
         try:
-            client.images.build(tag=self._tag, dockerfile=self._path, path=self._w_dir, rm=True)
+            client.images.build(tag=self._tag, dockerfile=self._path, path=self._w_dir, rm=True, nocache=True)
         except TypeError as e:
             self.err = str(e)
             self._status = 1
