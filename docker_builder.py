@@ -5,6 +5,7 @@ import shutil
 import socket
 import subprocess
 import threading
+import time
 
 import docker  # pip3 install docker
 
@@ -25,11 +26,12 @@ DEF_TAGS = {        # Подстановки доступные в теге:
 class Build(threading.Thread):
     def __init__(self, tag, path, w_dir):
         super().__init__()
-        self._tag = tag
+        self.tag = tag
         self._path = path
         self._w_dir = w_dir
         self._status = None
         self.err = ''
+        self.work_time = 0
         self.start()
 
     def status(self):
@@ -37,21 +39,26 @@ class Build(threading.Thread):
 
     def run(self):
         client = docker.from_env()
+        work_time = time.time()
         try:
-            client.images.build(tag=self._tag, dockerfile=self._path, path=self._w_dir, rm=True, nocache=True)
+            client.images.build(tag=self.tag, dockerfile=self._path, path=self._w_dir, rm=True, nocache=True)
         except TypeError as e:
             self.err = str(e)
-            self._status = 1
+            _status = 1
         else:
-            self._status = 0
+            _status = 0
+        self.work_time = int(time.time() - work_time)
+        self._status = _status
 
 
 class Push(threading.Thread):
     def __init__(self, tag):
         super().__init__()
+        self.tag = tag
         self._repository, self._tag = tag.rsplit(':', 1)
         self._status = None
         self.err = ''
+        self.work_time = 0
         self.start()
 
     def status(self):
@@ -59,17 +66,21 @@ class Push(threading.Thread):
 
     def run(self):
         client = docker.from_env()
+        work_time = time.time()
+        _status = None
         for retry in range(1, 3):
             try:
                 self.err = client.images.push(repository=self._repository, tag=self._tag)
             except socket.timeout:
                 print('Error push {}:{}. Retry {}'.format(self._repository, self._tag, retry))
             else:
-                self._status = 0
+                _status = 0
                 break
-        if self._status is None:
+        if _status is None:
             self.err += ' socket error'
-            self._status = 1
+            _status = 1
+        self.work_time = int(time.time() - work_time)
+        self._status = _status
 
 
 def _get_run_stdout(cmd: list, fatal: bool) -> str:
@@ -331,10 +342,11 @@ def generate_builds(cfg, targets_all):
     return return_me
 
 
-def docker_prune(targets: list):
+def docker_prune(targets: list) -> int:
     # Удалить контейнеры и образы из списка реп:тег.
     # Ошибок быть не должно, вообще.
     # Чекает первый элемент, т.е. тоже что вернул generate_builds
+    work_time = time.time()
     containers = _docker_containers()
     images_ = _docker_images()
 
@@ -355,3 +367,4 @@ def docker_prune(targets: list):
                     _docker_prune_container(container[1])
             # И образ
             docker_prune_image(target[0])
+    return int(time.time() - work_time)

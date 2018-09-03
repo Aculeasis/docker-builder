@@ -25,7 +25,7 @@ CFG = {
     # Потоков пуша
     'max_push_t': 2,
     # Принудительно пересобрать образы.
-    'force': False,
+    'force': True,
 }
 
 TARGETS = [
@@ -77,9 +77,7 @@ class Builder:
         self.cfg = cfg
         self.to_build = docker_builder.generate_builds(self.cfg, targets)
         if len(self.to_build):
-            w_time = time.time()
-            docker_builder.docker_prune(self.to_build)
-            print('\nDocker prune in {} sec\n'.format(int(time.time() - w_time)))
+            print('\nDocker prune in {} sec\n'.format(docker_builder.docker_prune(self.to_build)))
         else:
             print()
             print('Nothing to do, bye')
@@ -99,7 +97,7 @@ class Builder:
             self.add_new_push()
             if self.cfg['remove_fast']:
                 self.remove_check()
-            time.sleep(20)
+            time.sleep(5)
         self.push()
 
     def push(self):
@@ -108,7 +106,7 @@ class Builder:
             self.add_new_push()
             if self.cfg['remove_fast']:
                 self.remove_check()
-            time.sleep(20)
+            time.sleep(5)
         self.remove_check()
         docker_builder.docker_logout()
 
@@ -122,13 +120,13 @@ class Builder:
         while len(self.building) < self.cfg['max_build_t'] and len(self.to_build):
             cmd = self.to_build.pop(0)
             print('Start building {}'.format(cmd[0]))
-            self.building.append([docker_builder.Build(*cmd), cmd[0], time.time()])
+            self.building.append(docker_builder.Build(*cmd))
 
     def add_new_push(self):
         while self.cfg['auto_push'] and len(self.pushing) < self.cfg['max_push_t'] and len(self.builded):
             cmd = self.builded.pop(0)
             print('Start pushing {}'.format(cmd))
-            self.pushing.append([docker_builder.Push(cmd), cmd, time.time()])
+            self.pushing.append(docker_builder.Push(cmd))
 
     @staticmethod
     def _x_check(src: list, dst: list, name: str):
@@ -138,13 +136,13 @@ class Builder:
         while check:
             check = False
             for el in range(0, len(src)):
-                if src[el][0].status() is not None:
+                if src[el].status() is not None:
                     i = src.pop(el)
-                    if not i[0].status():
-                        print('{} {} successful in {} sec'.format(name, i[1], int(time.time() - i[2])))
-                        dst.append(i[1])
+                    if not i.status():
+                        print('{} {} successful in {} sec'.format(name, i.tag, i.work_time))
+                        dst.append(i.tag)
                     else:
-                        print('{} {} failed [{}]: {}'.format(name, i[1], i[0].status(), i[0].err))
+                        print('{} {} failed [{}]: {}'.format(name, i.tag, i.status(), i.err))
                         print()
                     check = True
                     break
