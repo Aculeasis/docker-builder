@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 
 import time
+import argparse
+import json
 
 import docker_builder
 
@@ -73,7 +75,7 @@ TARGETS = [
 
 
 class Builder:
-    def __init__(self, cfg, targets):
+    def __init__(self, cfg, targets, not_build):
         self.cfg = cfg
         self.to_build = docker_builder.generate_builds(self.cfg, targets)
         if len(self.to_build):
@@ -87,7 +89,10 @@ class Builder:
         self.pushing = []
         self.pushed = []
 
-        self.build()
+        if not_build:
+            print('Nope!')
+        else:
+            self.build()
 
     def build(self):
         while len(self.to_build) or len(self.building):
@@ -155,5 +160,31 @@ class Builder:
         self._x_check(self.building, self.builded, 'Build')
 
 
+def json_loader(fp: open, type_: type):
+    data = None
+    try:
+        data = json.load(fp)
+        if type(data) is not type_:
+            raise ValueError('Wrong object: \'{}\' is not \'{}\''.format(type(data).__name__, type_.__name__))
+    except (json.JSONDecodeError, ValueError, IOError) as e:
+        print('Error load {}: {}'.format(fp.name, str(e)))
+        fp.close()
+        exit(1)
+    else:
+        fp.close()
+    return data
+
+
+def cl_parse():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-n', '--nope', action='store_true', help='Don\'t build images')
+    parser.add_argument('-c', metavar='FILE', type=open, help='File with settings, in json')
+    parser.add_argument('-t', metavar='FILE', type=open, help='File with build targets, in json')
+    args = parser.parse_args()
+    cfg = json_loader(args.c, dict) if args.c else CFG
+    targets = json_loader(args.t, list) if args.t else TARGETS
+    return cfg, targets, args.nope
+
+
 if __name__ == '__main__':
-    Builder(CFG, TARGETS)
+    Builder(*cl_parse())
