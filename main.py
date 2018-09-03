@@ -27,7 +27,7 @@ CFG = {
     # Потоков пуша
     'max_push_t': 2,
     # Принудительно пересобрать образы.
-    'force': True,
+    'force': False,
 }
 
 TARGETS = [
