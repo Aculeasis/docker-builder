@@ -12,7 +12,6 @@ import docker  # pip3 install docker
 
 # TODO: Обработка зависимостей, например 'depends'=[] список зависимостей типа индекс\имя, индекс\имя. Хз как лучше.
 # TODO: Переписать работу с докером с subprocess на docker
-# FIXME: Очень страшный TARGETS, надо переделать.
 
 DEF_TAGS = {        # Подстановки доступные в теге:
     'arch': '',     # Архитектура системы где запущен скрипт: amd64, arm64v8, arm32v7 или unknown
@@ -249,8 +248,11 @@ def docker_prune_image(name: str, fatal: bool = True):
 
 
 def _cfg_prepare(cfg: dict):
-    if not os. path.isdir(cfg['work_dir']):
+    if not os.path.isdir(cfg['work_dir']):
         raise RuntimeError('\'work_dir\' not found: {}', cfg['work_dir'])
+    cfg['triggers'] = os.path.join(cfg['work_dir'], cfg.get('triggers', '.triggers'))
+    if not os.path.isdir(cfg['triggers']):
+        os.mkdir(cfg['triggers'])
     if cfg['auto_push']:
         path = cfg['credentials'] if cfg['credentials'].startswith('/') \
             else os.path.join(cfg['work_dir'], cfg['credentials'])
@@ -262,84 +264,144 @@ def _cfg_prepare(cfg: dict):
     if cfg['arch_detect'] and cfg['arch'] == 'unknown':
         raise RuntimeError('Unknown architecture and \'arch_detect\' is True')
     print('Architecture: {}'.format(cfg['arch']))
+    return cfg
 
 
-def __list_in_list(list1, list2):
-    for l in list1:
-        if l in list2:
-            return True
-    return False
+class GenerateBuilds:
+    def __init__(self, cfg, targets_all, git_triggers):
+        self.cfg = _cfg_prepare(cfg)
+        self.targets_all = targets_all
+        self.git_triggers = git_triggers
+        self.filled_triggers = {}
+        self.to_build = []
+        self.all_build_name = set()
 
+    def get(self):
+        self._generate()
+        return_me = []
+        print_allow = []
+        print_ignore = []
+        for i in self.to_build:
+            if i['true']:
+                print_allow.append('Allow building {} from {}: {}'.format(i['cmd'][0], i['cmd'][1], i['reason']))
+                # Дополняем пути
+                i['cmd'][1] = os.path.join(self.cfg['work_dir'], i['cmd'][1])
+                i['cmd'][2] = os.path.join(self.cfg['work_dir'], i['cmd'][2])
+                return_me.append(i['cmd'])
+            else:
+                print_ignore.append('Ignore {} from {}: {}'.format(i['cmd'][0], i['cmd'][1], i['reason']))
+        if len(print_ignore):
+            print()
+            print('\n'.join(print_ignore))
+        if len(print_allow):
+            print()
+            print('\n'.join(print_allow))
+        return return_me
 
-def generate_builds(cfg, targets_all):
-    # Все что нужно для сборки. После можно удалить TARGETS
-    # Обновляет локальные репы
+    @staticmethod
+    def _triggers_check(files: list, change_files: list or None):
+        if change_files is None:
+            return True, 'clone'
+        for file in files:
+            if file.startswith('*'):  # Триггер или любой файл
+                if len(file) == 1 and len(change_files):  # Любой файл. Триггеры в другом месте проверим
+                    return True, 'any'
+            elif file in change_files:
+                return True, file
+        return False, None
 
-    # Вернет список из списков, состоящих из полного имени билда (-t), абсолютного пути к докерфайлу (-f)
-    # и пути до директории сборки
-    # docker build -t foo[0] -f foo[1] foo[2]
-    _cfg_prepare(cfg)
-    to_build = []
-    all_build_name = set()
-    for targets in targets_all:
-        if 'git' not in targets or 'dir' not in targets or 'targets' not in targets:
-            print('Wrong target, ignore: {}'.format(targets))
-            continue
-        git_path = os.path.join(cfg['work_dir'], targets['dir'])
-        change_files = None
-        if _is_git(git_path):  # Делаем пул
-            change_files = _git_pull(git_path)
-        else:  # клонируем
-            if not _git_clone(targets['git'], git_path):
-                print('Ignore {}'.format(targets['git']))
+    @staticmethod
+    def _git_triggers_check(files: list, triggers: dict):
+        for file in files:
+            if file.startswith('*') and len(file) > 1:  # Триггер
+                if triggers.get(file[1:], False):
+                    return True, file[1:]
+        return False, None
+
+    def _generate_git_triggers(self):
+        # Обработка GIT_TRIGGERS
+        for dir_ in self.git_triggers:
+            git = self.git_triggers[dir_]['git']
+            file_triggers = self.git_triggers[dir_]['triggers']
+            if not len(file_triggers):
                 continue
-        tags = _git_get_tags(git_path, cfg)
-        for target in targets['targets']:
-            is_change = cfg['force'] or change_files is None or __list_in_list(target.get('triggers', []), change_files)
-            main_name = '{}/{}'.format(cfg['user'], target['registry']) if cfg['user'] else target['registry']
-            for build in target['build']:
-                is_change = is_change or build[0] in change_files
-                tag = build[1].format(**tags)
-                full_path = os.path.join(git_path, build[0])
-                build_name = '{}:{}'.format(main_name, tag)
-                e = {
-                    'reason': '',
-                    'cmd': [build_name, full_path, git_path]
-                }
-                # Пошли проверочки
-                if not len(tag):
-                    e['reason'] = 'Empty tag'
-                elif not len(target['registry']):
-                    e['reason'] = 'Empty registry'
-                elif not is_change:
-                    e['reason'] = 'No change'
-                elif not os.path.isfile(e['cmd'][1]):
-                    e['reason'] = 'File not found: {}'.format(e['cmd'][1])
-                elif build_name in all_build_name:
-                    e['reason'] = 'Name:tag \'{}\' already present'.format(build_name)
-                elif cfg['arch_detect'] and cfg['arch'] != _get_arch_from_dockerfile(e['cmd'][1]):
-                    e['reason'] = 'Wrong architecture: not {}'.format(cfg['arch'])
+            git_path = os.path.join(self.cfg['triggers'], dir_)
+            change_files = None
+            if _is_git(git_path):  # Делаем пул
+                change_files = _git_pull(git_path)
+            else:  # клонируем
+                if not _git_clone(git, git_path):
+                    print('Ignore git-triggers from {}'.format(git))
+                    continue
+            # Обходим триггеры
+            for trigger, file_list in file_triggers.items():
+                result, _ = self._triggers_check(file_list, change_files)
+                self.filled_triggers[trigger] = self.filled_triggers.get(trigger, False) | result
 
+    def _generate(self):
+        self._generate_git_triggers()
+        if len(self.filled_triggers):
+            print('git-triggers: {}'.format(self.filled_triggers))
+        for targets in self.targets_all:
+            if 'git' not in targets or 'dir' not in targets or 'targets' not in targets:
+                print('Wrong target, ignore: {}'.format(targets))
+                continue
+            full_git_path = os.path.join(self.cfg['work_dir'], targets['dir'])
+            change_files = None
+            if _is_git(full_git_path):  # Делаем пул
+                change_files = _git_pull(full_git_path)
+            else:  # клонируем
+                if not _git_clone(targets['git'], full_git_path):
+                    print('Ignore {}'.format(targets['git']))
+                    continue
+            tags = _git_get_tags(full_git_path, self.cfg)
+            for target in targets['targets']:
+                self._target_check(target, change_files, tags, targets['dir'])
+
+    def _target_check(self, target, change_files, tags, git_path):
+        is_file_change, change_of = self._triggers_check(target.get('triggers', []), change_files)
+        is_triggered, triggered_of = self._git_triggers_check(target.get('triggers', []), self.filled_triggers)
+        is_change = self.cfg['force'] or is_file_change or is_triggered
+        main_name = '{}/{}'.format(self.cfg['user'], target['registry']) if self.cfg['user'] else target['registry']
+        for build in target['build']:
+            is_change |= build[0] in change_files
+            tag = build[1].format(**tags)
+            path = os.path.join(git_path, build[0])
+            full_path = os.path.join(self.cfg['work_dir'], path)
+            build_name = '{}:{}'.format(main_name, tag)
+            e = {
+                'reason': '',
+                'cmd': [build_name, path, git_path],
+                'true': True
+            }
+            # Пошли проверочки на исключение
+            if not len(tag):
+                e['reason'] = 'Empty tag'
+            elif not len(target['registry']):
+                e['reason'] = 'Empty registry'
+            elif not is_change:
+                e['reason'] = 'No change'
+            elif not os.path.isfile(full_path):
+                e['reason'] = 'File not found: {}'.format(e['cmd'][1])
+            elif build_name in self.all_build_name:
+                e['reason'] = 'Name:tag \'{}\' already present'.format(build_name)
+            elif self.cfg['arch_detect'] and self.cfg['arch'] != _get_arch_from_dockerfile(full_path):
+                e['reason'] = 'Wrong architecture: not {}'.format(self.cfg['arch'])
+
+            if e['reason']:
+                e['true'] = False
+
+            if e['true']:
+                # Добавляем причины включения
+                if self.cfg['force']:
+                    e['reason'] = 'force: True'
+                elif is_file_change:
+                    e['reason'] = 'File change: {}'.format(change_of)
+                elif is_triggered:
+                    e['reason'] = 'Triggered from git-trigger: {}'.format(triggered_of)
                 # Имя билда должно быть уникально
-                if not e['reason']:
-                    all_build_name.add(build_name)
-                to_build.append(e)
-    # Уф, вышли
-    return_me = []
-    first = True
-    for i in to_build:
-        if not i['reason']:
-            return_me.append(i['cmd'])
-        else:
-            if first:
-                first = False
-                print()
-            print('Ignore {} from {}: {}'.format(i['cmd'][0], i['cmd'][1], i['reason']))
-    if len(return_me):
-        print()
-    for i in return_me:
-        print('Allow building {} from {}'.format(i[0], i[1]))
-    return return_me
+                self.all_build_name.add(build_name)
+            self.to_build.append(e)
 
 
 def docker_prune(targets: list) -> int:

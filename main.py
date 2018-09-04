@@ -9,6 +9,8 @@ import docker_builder
 CFG = {
     # Каталог где есть\будут лежать git-репы.
     'work_dir': '/root',
+    # Субдиректория с триггерами
+    'triggers': '.triggers',
     # ID в хабе. Если auto_push: True то перезапишет при логине.
     'user': '',
     # Файл с login pass от хаба в work_dir. Если начинается с / то абсолютный путь.
@@ -39,7 +41,9 @@ TARGETS = [
      'targets': [
          {   # registry - регистр на хабе.
              # triggers: список из файлов-триггеров, их обновление также активирует сборку. Может быть опущен.
-             'registry': 'mdmt2', 'triggers': ['crutch.py', 'entrypoint.sh'],
+             # Если начинается с * - это триггер из GIT_TRIGGERS
+             # Если просто * - изменение любого файла
+             'registry': 'mdmt2', 'triggers': ['crutch.py', 'entrypoint.sh', '*mdmt2'],
              # build: список из списков [файл докера, тег].
              # В теге возможны подстановки, см. DEF_TAGS.
              'build': [
@@ -49,7 +53,7 @@ TARGETS = [
              ]
           },
          {
-             'registry': 'mdmt2_rhvoice', 'triggers': ['crutch.py', 'entrypoint.sh'],
+             'registry': 'mdmt2_rhvoice', 'triggers': ['crutch.py', 'entrypoint.sh', '*mdmt2', '*rhv_dict', '*rhv'],
              'build': [
                  ['Dockerfile_rhvoice.amd64',   '{arch}'],
                  ['Dockerfile_rhvoice.arm64v8', '{arch}'],
@@ -62,7 +66,7 @@ TARGETS = [
      'dir': 'rhvoice-rest',
      'targets': [
          {
-             'registry': 'rhvoice-rest', 'triggers': ['app.py', ],
+             'registry': 'rhvoice-rest', 'triggers': ['app.py', '*rhv_dict', '*rhv'],
              'build': [
                  ['Dockerfile.amd64',   '{arch}'],
                  ['Dockerfile.arm64v8', '{arch}'],
@@ -73,25 +77,48 @@ TARGETS = [
      }
 ]
 
+GIT_TRIGGERS = {
+    # Делает git clone\pull так же как с TARGETS, но в work_dir/triggers
+    # Сами триггеры похожи на targets, но вместо сборки образа они устанавливают триггер в True или False
+    # Имя триггера может повторяться, при этом конечный результат будет выражен через логический or.
+    # Т.е. если есть a: False и a: True будет False | True = True
+    # Главный недостаток в том, что все эти репы будут занимать место -_-
+    # Ключ - директория
+    'RHVoice-dictionary': {
+        'git': 'https://github.com/vantu5z/RHVoice-dictionary',
+        'triggers': {
+            'rhv_dict': ['*', ],
+        }
+    },
+    'mdmTerminal2': {
+        'git': 'https://github.com/Aculeasis/mdmTerminal2',
+        'triggers': {
+            'mdmt2': ['*', ],
+        },
+    },
+    'rhvoice-rest': {
+        'git': 'https://github.com/Aculeasis/rhvoice-rest',
+        'triggers': {
+            'rhv': ['*', ],
+        }
+    },
+}
+
 
 class Builder:
-    def __init__(self, cfg, targets, not_build):
+    def __init__(self, cfg, targets, git_triggers, not_build):
         self.cfg = cfg
-        self.to_build = docker_builder.generate_builds(self.cfg, targets)
-        if len(self.to_build):
+        self.to_build = docker_builder.GenerateBuilds(cfg, targets, git_triggers).get()
+        self.building = []
+        self.builded = []
+        self.pushing = []
+        self.pushed = []
+        if len(self.to_build) and not not_build:
             print('\nDocker prune in {} sec\n'.format(docker_builder.docker_prune(self.to_build)))
         else:
             print()
             print('Nothing to do, bye')
-        self.building = []
-        self.builded = []
-
-        self.pushing = []
-        self.pushed = []
-
-        if not_build:
-            print('Nope!')
-        else:
+        if not not_build:
             self.build()
 
     def build(self):
@@ -178,12 +205,17 @@ def json_loader(fp: open, type_: type):
 def cl_parse():
     parser = argparse.ArgumentParser()
     parser.add_argument('-n', '--nope', action='store_true', help='Don\'t build images')
+    parser.add_argument('-f', '--force', action='store_true', help='Set force to True')
     parser.add_argument('-c', metavar='FILE', type=open, help='File with settings, in json')
     parser.add_argument('-t', metavar='FILE', type=open, help='File with build targets, in json')
+    parser.add_argument('-g', metavar='FILE', type=open, help='File with git-triggers, in json')
     args = parser.parse_args()
     cfg = json_loader(args.c, dict) if args.c else CFG
     targets = json_loader(args.t, list) if args.t else TARGETS
-    return cfg, targets, args.nope
+    git_triggers = json_loader(args.g, dict) if args.g else GIT_TRIGGERS
+    if args.force:
+        cfg['force'] = True
+    return cfg, targets, git_triggers, args.nope
 
 
 if __name__ == '__main__':
