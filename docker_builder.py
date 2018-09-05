@@ -385,7 +385,7 @@ class GenerateBuilds:
         is_change = self.cfg['force'] or is_file_change or is_triggered
         main_name = '{}/{}'.format(self.cfg['user'], target['registry']) if self.cfg['user'] else target['registry']
         for build in target['build']:
-            dockerfile_change = build[0] in change_files
+            dockerfile_change = change_files is not None and build[0] in change_files
             is_change |= dockerfile_change
             tag = build[1].format(**tags)
             path = os.path.join(git_path, build[0])
@@ -405,10 +405,10 @@ class GenerateBuilds:
                 e['reason'] = 'No change'
             elif not os.path.isfile(full_path):
                 e['reason'] = 'File not found: {}'.format(e['cmd'][1])
+            elif self.cfg['arch_detect'] and self.cfg['arch'] != _get_arch_from_dockerfile(full_path):
+                e['reason'] = 'Arch no {}'.format(self.cfg['arch'])
             elif build_name in self.all_build_name:
                 e['reason'] = 'Name:tag \'{}\' already present'.format(build_name)
-            elif self.cfg['arch_detect'] and self.cfg['arch'] != _get_arch_from_dockerfile(full_path):
-                e['reason'] = 'Wrong architecture: not {}'.format(self.cfg['arch'])
 
             if e['reason']:
                 e['true'] = False
