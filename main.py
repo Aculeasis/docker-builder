@@ -74,6 +74,19 @@ TARGETS = [
              ]
          },
      ]
+     },
+    {'git': 'https://github.com/Aculeasis/pocketsphinx-rest',
+     'dir': 'pocketsphinx-rest',
+     'targets': [
+         {
+             'registry': 'pocketsphinx-rest', 'triggers': ['app.py', 'entrypoint.sh'],
+             'build': [
+                 ['Dockerfile.amd64',   '{arch}'],
+                 ['Dockerfile.arm64v8', '{arch}'],
+                 ['Dockerfile.arm32v7', '{arch}']
+             ]
+         },
+     ]
      }
 ]
 
