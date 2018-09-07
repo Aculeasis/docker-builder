@@ -82,30 +82,9 @@ class Push(threading.Thread):
         self._status = _status
 
 
-def _get_run_stdout(cmd: list, fatal: bool) -> str:
-    run = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    if run.returncode:
-        print('Get error {} from \'{}\': {}'.format(run.returncode, ' '.join(run.args), run.stderr))
-        print('Output logs:')
-        for l in run.stdout.split('\n')[-5:]:
-            print(l)
-        if fatal:
-            raise RuntimeError('FATAL ERROR!')
-    return run.stdout.decode().strip('\n')
-
-
 def _get_arch() -> str:
-    """
-    Определяет архитектуру системы.
-    :return: архитектура системы или 'unknown'
-    """
     aarch = {'x86_64': 'amd64', 'aarch64': 'arm64v8', 'armv7l': 'arm32v7'}
-    arch = _get_run_stdout(['uname', '-m'], True)
-    if arch not in aarch:  # Тогда вот так
-        arch = _get_run_stdout(['uname', '-i'], True)
-    if arch not in aarch:
-        return 'unknown'
-    return aarch[arch]
+    return aarch.get(os.uname()[4], 'unknown')
 
 
 def _get_arch_from_dockerfile(path) -> str:
