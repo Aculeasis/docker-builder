@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
 
-import time
 import argparse
 import json
+import os
+import time
 
 import docker_builder
 
 CFG = {
     # Каталог где есть\будут лежать git-репы.
-    'work_dir': '/root',
+    'work_dir': os.path.expanduser('~'),
     # Субдиректория с триггерами
     'triggers': '.triggers',
     # ID в хабе. Если auto_push: True то перезапишет при логине.

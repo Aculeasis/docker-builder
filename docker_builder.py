@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 
 import os
+import platform
 import shutil
-import requests
 import subprocess
 import threading
 import time
 
 import docker  # pip3 install docker
-
+import requests  # pip3 install requests
 
 # TODO: Обработка зависимостей, например 'depends'=[] список зависимостей типа индекс\имя, индекс\имя. Хз как лучше.
 # TODO: Переписать работу с докером с subprocess на docker
@@ -83,8 +83,8 @@ class Push(threading.Thread):
 
 
 def _get_arch() -> str:
-    aarch = {'x86_64': 'amd64', 'aarch64': 'arm64v8', 'armv7l': 'arm32v7'}
-    return aarch.get(os.uname()[4], 'unknown')
+    aarch = {'x86_64': 'amd64', 'amd64': 'amd64', 'aarch64': 'arm64v8', 'armv7l': 'arm32v7'}
+    return aarch.get(platform.uname()[4].lower(), 'unknown')
 
 
 def _get_arch_from_dockerfile(path) -> str:
