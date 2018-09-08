@@ -2,7 +2,7 @@
 
 import os
 import shutil
-import socket
+import requests
 import subprocess
 import threading
 import time
@@ -67,11 +67,11 @@ class Push(threading.Thread):
         client = docker.from_env()
         work_time = time.time()
         _status = None
-        for retry in range(1, 3):
+        for retry in range(1, 5):
             try:
                 self.err = client.images.push(repository=self._repository, tag=self._tag)
-            except socket.timeout:
-                print('Error push {}:{}. Retry {}'.format(self._repository, self._tag, retry))
+            except requests.exceptions.ConnectionError as e:
+                print('Error push {}:{}. Retry {}. MSG: {}'.format(self._repository, self._tag, retry, e))
             else:
                 _status = 0
                 break
