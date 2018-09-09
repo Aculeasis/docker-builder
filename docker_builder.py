@@ -183,12 +183,12 @@ def __docker_run_fatal(cmd2: list, fatal: bool = True):
     return run
 
 
-def _docker_login(path, cfg):
+def _docker_login(cfg):
     # Читаем логин пасс из файла и логинимся.
-    with open(path, encoding='utf8') as f:
+    with open(cfg['credentials'], encoding='utf8') as f:
         data = [l.strip() for l in f.readline().strip('\n').split(' ', 1)]
     if len(data) != 2:
-        raise RuntimeError('Bad credentials, file {}, len={}!=2'.format(path, len(data)))
+        raise RuntimeError('Bad credentials, file {}, len={}!=2'.format(cfg['credentials'], len(data)))
     run = subprocess.run(
         ['docker', 'login', '-u', data[0], '-p', data[1]],
         stderr=subprocess.PIPE,
@@ -233,9 +233,8 @@ def _cfg_prepare(cfg: dict):
     if not os.path.isdir(triggers):
         os.mkdir(triggers)
     if cfg['auto_push']:
-        path = cfg['credentials'] if cfg['credentials'].startswith('/') \
+        cfg['credentials'] = cfg['credentials'] if cfg['credentials'].startswith('/') \
             else os.path.join(cfg['work_dir'], cfg['credentials'])
-        _docker_login(path, cfg)
     elif cfg['remove_after_push']:
         cfg['remove_after_push'] = False
         print('\'auto_push\' is False. Set \'remove_after_push\' to False.')
@@ -302,11 +301,19 @@ class GenerateBuilds:
 
     def _generate_git_triggers(self):
         # Обработка GIT_TRIGGERS
+        workers = []
         for dir_ in self.git_triggers:
             git = self.git_triggers[dir_]['git']
             file_triggers = self.git_triggers[dir_]['triggers']
+            th = threading.Thread(target=self.__git_triggers_th, args=(dir_, git, file_triggers))
+            th.start()
+            workers.append(th)
+        while [True for th in workers if th.is_alive()]:
+            time.sleep(0.02)
+
+    def __git_triggers_th(self, dir_, git, file_triggers):
             if not len(file_triggers):
-                continue
+                return
             if git in self.known_repos:
                 change_files = self.known_repos[git]['files']
             else:
@@ -318,7 +325,7 @@ class GenerateBuilds:
                 else:  # клонируем
                     if not _git_clone(git, full_git_path):
                         print('Ignore git-triggers from {}'.format(git))
-                        continue
+                        return
                 self.known_repos[git] = {'dir': git_path, 'files': change_files}
             # Обходим триггеры
             for trigger, file_list in file_triggers.items():
@@ -326,26 +333,40 @@ class GenerateBuilds:
                 self.filled_triggers[trigger] = self.filled_triggers.get(trigger, False) | result
 
     def _generate_targets_repo(self):
-        for targets in self.targets_all:
-            if 'git' not in targets or 'dir' not in targets or 'targets' not in targets:
-                print('Wrong target, ignore: {}'.format(targets))
-                continue
-            if targets['git'] in self.known_repos:
-                targets['dir'] = self.known_repos[targets['git']]['dir']
-            else:
-                full_git_path = os.path.join(self.cfg['work_dir'], targets['dir'])
-                change_files = None
-                if _is_git(full_git_path):  # Делаем пул
-                    change_files = _git_pull(full_git_path)
-                else:  # клонируем
-                    if not _git_clone(targets['git'], full_git_path):
-                        print('Ignore {}'.format(targets['git']))
-                        continue
-                self.known_repos[targets['git']] = {'dir': targets['dir'], 'files': change_files}
+        workers = [threading.Thread(target=self.__targets_repo_th, args=(t, )) for t in self.targets_all]
+        _ = [t.start() for t in workers]
+        while [True for th in workers if th.is_alive()]:
+            time.sleep(0.02)
 
-    def _generate(self):
+    def __targets_repo_th(self, targets):
+        if 'git' not in targets or 'dir' not in targets or 'targets' not in targets:
+            print('Wrong target, ignore: {}'.format(targets))
+            return
+        if targets['git'] in self.known_repos:
+            targets['dir'] = self.known_repos[targets['git']]['dir']
+        else:
+            full_git_path = os.path.join(self.cfg['work_dir'], targets['dir'])
+            change_files = None
+            if _is_git(full_git_path):  # Делаем пул
+                change_files = _git_pull(full_git_path)
+            else:  # клонируем
+                if not _git_clone(targets['git'], full_git_path):
+                    print('Ignore {}'.format(targets['git']))
+                    return
+            self.known_repos[targets['git']] = {'dir': targets['dir'], 'files': change_files}
+
+    def _docker_login(self):
+        _docker_login(self.cfg)
+
+    def _prepare_all(self):
+        auth_th = threading.Thread(target=self._docker_login, name='_docker_login')
+        auth_th.start()
         self._generate_targets_repo()
         self._generate_git_triggers()
+        return auth_th.join()
+
+    def _generate(self):
+        self._prepare_all()
         if len(self.filled_triggers):
             print('git-triggers: {}'.format(self.filled_triggers))
         for targets in self.targets_all:

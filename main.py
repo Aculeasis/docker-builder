@@ -134,6 +134,7 @@ class Builder:
             print('Nothing to do, bye')
         if not not_build:
             self.build()
+        docker_builder.docker_logout()
 
     def build(self):
         while len(self.to_build) or len(self.building):
@@ -154,7 +155,6 @@ class Builder:
                 self.remove_check()
             time.sleep(5)
         self.remove_check()
-        docker_builder.docker_logout()
 
     def remove_check(self):
         while self.cfg['remove_after_push'] and self.cfg['auto_push'] and len(self.pushed):
