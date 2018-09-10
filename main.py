@@ -120,7 +120,10 @@ GIT_TRIGGERS = {
 
 
 class Builder:
-    def __init__(self, cfg, targets, git_triggers, not_build):
+    def __init__(self, cfg, targets, git_triggers, not_build, install):
+        if install is not None:
+            docker_builder.SystemD(install)
+            return
         self.cfg = cfg
         self.to_build = docker_builder.GenerateBuilds(cfg, targets, git_triggers).get()
         self.building = []
@@ -223,13 +226,23 @@ def cl_parse():
     parser.add_argument('-c', metavar='FILE', type=open, help='File with settings, in json')
     parser.add_argument('-t', metavar='FILE', type=open, help='File with build targets, in json')
     parser.add_argument('-g', metavar='FILE', type=open, help='File with git-triggers, in json')
+    parser.add_argument('-p', metavar='PATH', help='rewrite work_dir')
+    one = parser.add_mutually_exclusive_group()
+    one.add_argument('--install', action='store_true', help='Install systemd unit')
+    one.add_argument('--uninstall', action='store_true', help='Remove systemd unit')
     args = parser.parse_args()
     cfg = json_loader(args.c, dict) if args.c else CFG
     targets = json_loader(args.t, list) if args.t else TARGETS
     git_triggers = json_loader(args.g, dict) if args.g else GIT_TRIGGERS
     if args.force:
         cfg['force'] = True
-    return cfg, targets, git_triggers, args.nope
+    cfg['work_dir'] = args.p or cfg['work_dir']
+    install = None
+    if args.install:
+        install = True
+    elif args.uninstall:
+        install = False
+    return cfg, targets, git_triggers, args.nope, install
 
 
 if __name__ == '__main__':

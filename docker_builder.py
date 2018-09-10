@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import threading
 import time
+import sys
 
 import docker  # pip3 install docker
 import requests  # pip3 install requests
@@ -454,3 +455,94 @@ def docker_prune(targets: list) -> int:
             # И образ
             docker_prune_image(target[0])
     return int(time.time() - work_time)
+
+
+class SystemD:
+    def __init__(self, action):
+        self._root_test()
+        name = 'docker builder auto'
+        f_name = '_'.join(name.lower().split())
+        self._files = ['{}.service'.format(f_name), '{}.timer'.format(f_name)]
+        self._systemd_path = '/etc/systemd/system/'
+        self._path = {
+            '_TIME_': '6h',
+            '_PARAMS_': self._get_params_str(),
+            '_MAIN_': os.path.abspath(sys.argv[0]),
+            '_NAME_': name
+        }
+        self._data = {k: self._getter(k) for k in self._files}
+        if action is None:
+            raise RuntimeError('Action is None')
+        elif action:
+            self.install()
+        else:
+            self.uninstall()
+
+    def install(self):
+        for k in self._data:
+            path = os.path.join(self._systemd_path, k)
+            with open(path, 'w') as fp:
+                fp.write(self._data[k])
+        self._systemd_reload()
+        self._systemd_enable()
+
+    def uninstall(self):
+        self._systemd_disable()
+        for k in self._data:
+            try:
+                os.remove(os.path.join(self._systemd_path, k))
+            except FileNotFoundError:
+                pass
+        self._systemd_reload()
+
+    @staticmethod
+    def _get_params_str() -> str:
+        params = sys.argv[1:]
+        for rm in ['--install', '--uninstall']:
+            if rm in params:
+                params.remove(rm)
+        if '-p' not in params:
+            params.extend(['-p', os.path.expanduser('~')])
+        return ' '.join(params)
+
+    @staticmethod
+    def _root_test():
+        if os.geteuid() != 0:
+            print('--(un)install need root privileges. Use sudo, bye.')
+            exit(1)
+
+    @staticmethod
+    def _systemd_reload():
+        subprocess.run(['systemctl', 'daemon-reload'])
+
+    def _systemd_enable(self):
+        subprocess.run(['systemctl', 'enable', self._files[1]])
+        subprocess.run(['systemctl', 'start', self._files[1]])
+
+    def _systemd_disable(self):
+        subprocess.run(['systemctl', 'stop', self._files[1]])
+        subprocess.run(['systemctl', 'disable', self._files[1]])
+
+    def _getter(self, file: str) -> str:
+        d = {
+            self._files[0]: [
+                '[Unit]',
+                'Description={_NAME_} job',
+                '',
+                '[Service]',
+                'Type=oneshot',
+                'ExecStart=/usr/bin/python3 -u {_MAIN_} {_PARAMS_}'
+            ],
+            self._files[1]: [
+                '[Unit]',
+                'Description={_NAME_}',
+                '',
+                '[Timer]',
+                'OnBootSec=15min',
+                'OnUnitActiveSec={_TIME_}',
+                '',
+                '[Install]',
+                'WantedBy=timers.target'
+            ]
+        }
+        return '\n'.join(d[file]).format(**self._path)
