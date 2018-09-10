@@ -242,12 +242,12 @@ def _cfg_prepare(cfg: dict):
     cfg['arch'] = _get_arch()
     if cfg['arch_detect'] and cfg['arch'] == 'unknown':
         raise RuntimeError('Unknown architecture and \'arch_detect\' is True')
-    print('Architecture: {}'.format(cfg['arch']))
     return cfg
 
 
 class GenerateBuilds:
-    def __init__(self, cfg, targets_all, git_triggers):
+    def __init__(self, cfg, targets_all, git_triggers, args):
+        self._cli = args
         self.cfg = _cfg_prepare(cfg)
         self.targets_all = targets_all
         self.git_triggers = git_triggers
@@ -257,6 +257,8 @@ class GenerateBuilds:
         # Не дублировать репозитории. Если реп уже обновлен используем его и его данные для других. Уникальный id - url
         # Формат 'url': {dir: dir, files: [] or None}
         self.known_repos = {}
+        if self._cli.v:
+            print('Architecture: {}'.format(self.cfg['arch']))
 
     def get(self):
         self._generate()
@@ -272,7 +274,7 @@ class GenerateBuilds:
                 return_me.append(i['cmd'])
             else:
                 print_ignore.append('Ignore {} from {}: {}'.format(i['cmd'][0], i['cmd'][1], i['reason']))
-        if len(print_ignore):
+        if len(print_ignore) and self._cli.v:
             print()
             print('\n'.join(print_ignore))
         if len(print_allow):
@@ -368,7 +370,7 @@ class GenerateBuilds:
 
     def _generate(self):
         self._prepare_all()
-        if len(self.filled_triggers):
+        if len(self.filled_triggers) and self._cli.v:
             print('git-triggers: {}'.format(self.filled_triggers))
         for targets in self.targets_all:
             git = targets['git']

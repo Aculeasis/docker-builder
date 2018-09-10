@@ -120,22 +120,24 @@ GIT_TRIGGERS = {
 
 
 class Builder:
-    def __init__(self, cfg, targets, git_triggers, not_build, install):
+    def __init__(self, cfg, targets, git_triggers, args, install):
         if install is not None:
             docker_builder.SystemD(install)
             return
         self.cfg = cfg
-        self.to_build = docker_builder.GenerateBuilds(cfg, targets, git_triggers).get()
+        self.to_build = docker_builder.GenerateBuilds(cfg, targets, git_triggers, args).get()
         self.building = []
         self.builded = []
         self.pushing = []
         self.pushed = []
-        if len(self.to_build) and not not_build:
-            print('\nDocker prune in {} sec\n'.format(docker_builder.docker_prune(self.to_build)))
-        else:
+        if len(self.to_build) and not args.nope:
+            work_time = docker_builder.docker_prune(self.to_build)
+            if args.v:
+                print('\nDocker prune in {} sec\n'.format(work_time))
+        elif args.v:
             print()
             print('Nothing to do, bye')
-        if not not_build:
+        if not args.nope:
             self.build()
         docker_builder.docker_logout()
 
@@ -223,6 +225,7 @@ def cl_parse():
     parser = argparse.ArgumentParser()
     parser.add_argument('-n', '--nope', action='store_true', help='Don\'t build images')
     parser.add_argument('-f', '--force', action='store_true', help='Set force to True')
+    parser.add_argument('-v', action='store_true', help='Increase verbosity level')
     parser.add_argument('-c', metavar='FILE', type=open, help='File with settings, in json')
     parser.add_argument('-t', metavar='FILE', type=open, help='File with build targets, in json')
     parser.add_argument('-g', metavar='FILE', type=open, help='File with git-triggers, in json')
@@ -242,7 +245,7 @@ def cl_parse():
         install = True
     elif args.uninstall:
         install = False
-    return cfg, targets, git_triggers, args.nope, install
+    return cfg, targets, git_triggers, args, install
 
 
 if __name__ == '__main__':
