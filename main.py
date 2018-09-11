@@ -44,6 +44,7 @@ TARGETS = [
              # triggers: список из файлов-триггеров, их обновление также активирует сборку. Может быть опущен.
              # Если начинается с * - это триггер из GIT_TRIGGERS
              # Если просто * - изменение любого файла
+             # * в конце - любой файл начинающийся с (пути без начального слеша). 'src*' in 'src/main.py' - > True
              'registry': 'mdmt2', 'triggers': ['crutch.py', 'entrypoint.sh', '*mdmt2'],
              # build: список из списков [файл докера, тег].
              # В теге возможны подстановки, см. DEF_TAGS.
@@ -67,7 +68,7 @@ TARGETS = [
      'dir': 'rhvoice-rest',
      'targets': [
          {
-             'registry': 'rhvoice-rest', 'triggers': ['app.py', '*rhv_dict', '*rhv'],
+             'registry': 'rhvoice-rest', 'triggers': ['app.py', 'entrypoint.sh', '*rhv_dict'],
              'build': [
                  ['Dockerfile.amd64',   '{arch}'],
                  ['Dockerfile.arm64v8', '{arch}'],
@@ -107,13 +108,13 @@ GIT_TRIGGERS = {
     'mdmTerminal2': {
         'git': 'https://github.com/Aculeasis/mdmTerminal2',
         'triggers': {
-            'mdmt2': ['*', ],
+            'mdmt2': ['src/*', ],
         },
     },
     'rhvoice-rest': {
         'git': 'https://github.com/Aculeasis/rhvoice-rest',
         'triggers': {
-            'rhv': ['*', ],
+            'rhv': ['app.py', 'entrypoint.sh'],
         }
     },
 }
