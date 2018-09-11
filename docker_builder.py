@@ -282,17 +282,26 @@ class GenerateBuilds:
             print('\n'.join(print_allow))
         return return_me
 
-    @staticmethod
-    def _triggers_check(files: list, change_files: list or None):
+    def _triggers_check(self, files: list, change_files: list or None):
         if change_files is None:
             return True, 'clone'
         for file in files:
             if file.startswith('*'):  # Триггер или любой файл
                 if len(file) == 1 and len(change_files):  # Любой файл. Триггеры в другом месте проверим
                     return True, 'any'
+            elif file.endswith('*'):
+                if self._startswith_list(file[:-1], change_files):
+                    return True, file
             elif file in change_files:
                 return True, file
         return False, None
+
+    @staticmethod
+    def _startswith_list(start: str, files: list) -> bool:
+        for file in files:
+            if file.startswith(start):
+                return True
+        return False
 
     @staticmethod
     def _git_triggers_check(files: list, triggers: dict):
