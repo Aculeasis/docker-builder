@@ -4,12 +4,13 @@ import os
 import platform
 import shutil
 import subprocess
+import sys
 import threading
 import time
-import sys
 
 import docker  # pip3 install docker
 import requests  # pip3 install requests
+from docker.errors import BuildError
 
 # TODO: Обработка зависимостей, например 'depends'=[] список зависимостей типа индекс\имя, индекс\имя. Хз как лучше.
 # TODO: Переписать работу с докером с subprocess на docker
@@ -42,7 +43,7 @@ class Build(threading.Thread):
         work_time = time.time()
         try:
             client.images.build(tag=self.tag, dockerfile=self._path, path=self._w_dir, rm=True, nocache=True)
-        except TypeError as e:
+        except (TypeError, BuildError)as e:
             self.err = str(e)
             _status = 1
         else:
