@@ -68,7 +68,7 @@ TARGETS = [
      'dir': 'rhvoice-rest',
      'targets': [
          {
-             'registry': 'rhvoice-rest', 'triggers': ['app.py', 'entrypoint.sh', '*rhv_dict'],
+             'registry': 'rhvoice-rest', 'triggers': ['*rhv', '*rhv_dict'],
              'build': [
                  ['Dockerfile.amd64',   '{arch}'],
                  ['Dockerfile.arm64v8', '{arch}'],
@@ -114,7 +114,7 @@ GIT_TRIGGERS = {
     'rhvoice-rest': {
         'git': 'https://github.com/Aculeasis/rhvoice-rest',
         'triggers': {
-            'rhv': ['app.py', 'entrypoint.sh'],
+            'rhv': ['app.py', 'entrypoint.sh', 'rhvoice_proxy/rhvoice*'],
         }
     },
 }
