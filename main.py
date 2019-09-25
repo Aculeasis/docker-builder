@@ -31,6 +31,8 @@ CFG = {
     'max_push_t': 2,
     # Принудительно пересобрать образы.
     'force': False,
+    # Выполнить docker system prune -f, если что-то собирали
+    'prune': False,
 }
 
 TARGETS = [
@@ -122,23 +124,31 @@ GIT_TRIGGERS = {
 
 class Builder:
     def __init__(self, cfg, targets, git_triggers, args, install):
-        if install is not None:
-            docker_builder.SystemD(install)
-            return
         self.cfg = cfg
-        self.to_build = docker_builder.GenerateBuilds(cfg, targets, git_triggers, args).get()
+        self.targets = targets
+        self.git_triggers = git_triggers
+        self.args = args
+        self.install = install
+        self.count = 0
+        self.to_build = []
         self.building = []
         self.builded = []
         self.pushing = []
         self.pushed = []
-        if len(self.to_build) and not args.nope:
+
+    def start(self):
+        if self.install is not None:
+            docker_builder.SystemD(self.install)
+            return
+        self.to_build = docker_builder.GenerateBuilds(self.cfg, self.targets, self.git_triggers, self.args).get()
+        if len(self.to_build) and not self.args.nope:
             work_time = docker_builder.docker_prune(self.to_build)
-            if args.v:
+            if self.args.v:
                 print('\nDocker prune in {} sec\n'.format(work_time))
-        elif args.v:
+        elif self.args.v:
             print()
             print('Nothing to do, bye')
-        if not args.nope:
+        if not self.args.nope:
             self.build()
         docker_builder.docker_logout()
 
@@ -172,6 +182,7 @@ class Builder:
         while len(self.building) < self.cfg['max_build_t'] and len(self.to_build):
             cmd = self.to_build.pop(0)
             print('Start building {}'.format(cmd[0]))
+            self.count += 1
             self.building.append(docker_builder.Build(*cmd))
 
     def add_new_push(self):
@@ -226,6 +237,7 @@ def cl_parse():
     parser = argparse.ArgumentParser()
     parser.add_argument('-n', '--nope', action='store_true', help='Don\'t build images')
     parser.add_argument('-f', '--force', action='store_true', help='Set force to True')
+    parser.add_argument('--prune', action='store_true', help='Run system prune -f after building')
     parser.add_argument('-v', action='store_true', help='Increase verbosity level')
     parser.add_argument('-c', metavar='FILE', type=open, help='File with settings, in json')
     parser.add_argument('-t', metavar='FILE', type=open, help='File with build targets, in json')
@@ -240,6 +252,8 @@ def cl_parse():
     git_triggers = json_loader(args.g, dict) if args.g else GIT_TRIGGERS
     if args.force:
         cfg['force'] = True
+    if args.prune:
+        cfg['prune'] = True
     cfg['work_dir'] = args.p or cfg['work_dir']
     install = None
     if args.install:
@@ -249,5 +263,19 @@ def cl_parse():
     return cfg, targets, git_triggers, args, install
 
 
+def main():
+    cl_data = cl_parse()
+    prune = cl_data[0]['prune']
+    builder = Builder(*cl_data)
+    try:
+        builder.start()
+    except Exception as _e:
+        print('Internal error: {}'.format(_e))
+
+    if prune and builder.count:
+        print('Run system prune...')
+        docker_builder.docker_system_prune()
+
+
 if __name__ == '__main__':
-    Builder(*cl_parse())
+    main()

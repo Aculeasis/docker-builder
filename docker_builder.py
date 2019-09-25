@@ -228,6 +228,11 @@ def docker_prune_image(name: str, fatal: bool = True):
     __docker_run_fatal(['rmi', name], fatal)
 
 
+def docker_system_prune(fatal: bool = False):
+    # docker system prune -f
+    __docker_run_fatal(['system', 'prune', '-f'], fatal)
+
+
 def _cfg_prepare(cfg: dict):
     if not os.path.isdir(cfg['work_dir']):
         raise RuntimeError('\'work_dir\' not found: {}', cfg['work_dir'])
