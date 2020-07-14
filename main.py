@@ -26,9 +26,9 @@ CFG = {
     # !!!: Файлы будут удалены сразу а не в самом конце. Сломает зависимости сборки, если они есть.
     'remove_fast': True,
     # Потоков сборки.
-    'max_build_t': 2,
+    'max_build_t': 1,
     # Потоков пуша
-    'max_push_t': 2,
+    'max_push_t': 1,
     # Принудительно пересобрать образы.
     'force': False,
     # Выполнить docker system prune -f, если что-то собирали
@@ -49,6 +49,7 @@ TARGETS = [
              # * в конце - любой файл начинающийся с (пути без начального слеша). 'src*' in 'src/main.py' - > True
              'registry': 'mdmt2', 'triggers': ['crutch.py', 'entrypoint.sh', '*mdmt2'],
              # build: список из списков [файл докера, тег].
+             # Добавлять докерфайлы в triggers не нужно.
              # В теге возможны подстановки, см. DEF_TAGS.
              'build': [
                  ['Dockerfile.amd64',   '{arch}'],
@@ -91,7 +92,20 @@ TARGETS = [
              ]
          },
      ]
-     }
+     },
+    {'git': 'https://github.com/Aculeasis/vosk-rest',
+     'dir': 'vosk-rest',
+     'targets': [
+         {
+             'registry': 'vosk-rest', 'triggers': ['app.py', 'entrypoint.sh'],
+             'build': [
+                 ['Dockerfile.amd64', '{arch}'],
+                 ['Dockerfile.arm64v8', '{arch}'],
+                 ['Dockerfile.arm32v7', '{arch}']
+             ]
+         },
+     ]
+     },
 ]
 
 GIT_TRIGGERS = {

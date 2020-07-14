@@ -151,27 +151,28 @@ def _git_get_full_hash(path) -> str:
 
 def _git_get_tags(path: str, cfg: dict) -> dict:
     # вернет заполненные теги
-    def get_run(cmd_: list) -> subprocess.run:
+    def get_git_str(cmd_: list) -> str:
         cmd = ['git', '-C', path]
-        return subprocess.run(cmd + cmd_, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        run = subprocess.run(cmd + cmd_, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        return run.stdout.decode().strip('\n') if not run.returncode else ''
 
-    tags = DEF_TAGS.copy()
-    tags['arch'] = cfg['arch']
-    tags['c_full'] = _git_get_full_hash(path)
-    if tags['c_full']:
-        run = get_run(['rev-parse', '--short=7', tags['c_full']])
-        if not run.returncode:
-            # 2a2f3f60c7bc168c3121c07fefc84bedf9ed4abd -> 2a2f3f6
-            tags['c_short'] = run.stdout.decode().strip('\n')
-    run = get_run(['describe', ])
-    if not run.returncode:
+    tag_c_full = _git_get_full_hash(path)
+    ready = {
+        # arm64v8
+        'arch': cfg['arch'],
+        # 2a2f3f60c7bc168c3121c07fefc84bedf9ed4abd
+        'c_full': tag_c_full,
+        # 2a2f3f60c7bc168c3121c07fefc84bedf9ed4abd -> 2a2f3f6
+        'c_short': get_git_str(['rev-parse', '--short=7', tag_c_full]),
         # 0.7.1-1-gdc36179
-        tags['tag_full'] = run.stdout.decode().strip('\n')
-    if tags['tag_full']:
-        run = get_run(['describe', '--abbrev=0'])
-        if not run.returncode:
-            # 0.7.1
-            tags['tag'] = run.stdout.decode().strip('\n')
+        'tag_full': get_git_str(['describe', ]),
+        # 0.7.1
+        'tag': get_git_str(['describe', '--abbrev=0'])
+    }
+    tags = DEF_TAGS.copy()
+    for key, value in ready.items():
+        if value and key in tags:
+            tags[key] = value
     return tags
 
 
@@ -330,25 +331,25 @@ class GenerateBuilds:
             time.sleep(0.02)
 
     def __git_triggers_th(self, dir_, git, file_triggers):
-            if not len(file_triggers):
-                return
-            if git in self.known_repos:
-                change_files = self.known_repos[git]['files']
-            else:
-                git_path = os.path.join(self.cfg['triggers'], dir_)
-                full_git_path = os.path.join(self.cfg['work_dir'], git_path)
-                change_files = None
-                if _is_git(full_git_path):  # Делаем пул
-                    change_files = _git_pull(full_git_path)
-                else:  # клонируем
-                    if not _git_clone(git, full_git_path):
-                        print('Ignore git-triggers from {}'.format(git))
-                        return
-                self.known_repos[git] = {'dir': git_path, 'files': change_files}
-            # Обходим триггеры
-            for trigger, file_list in file_triggers.items():
-                result, _ = self._triggers_check(file_list, change_files)
-                self.filled_triggers[trigger] = self.filled_triggers.get(trigger, False) | result
+        if not len(file_triggers):
+            return
+        if git in self.known_repos:
+            change_files = self.known_repos[git]['files']
+        else:
+            git_path = os.path.join(self.cfg['triggers'], dir_)
+            full_git_path = os.path.join(self.cfg['work_dir'], git_path)
+            change_files = None
+            if _is_git(full_git_path):  # Делаем пул
+                change_files = _git_pull(full_git_path)
+            else:  # клонируем
+                if not _git_clone(git, full_git_path):
+                    print('Ignore git-triggers from {}'.format(git))
+                    return
+            self.known_repos[git] = {'dir': git_path, 'files': change_files}
+        # Обходим триггеры
+        for trigger, file_list in file_triggers.items():
+            result, _ = self._triggers_check(file_list, change_files)
+            self.filled_triggers[trigger] = self.filled_triggers.get(trigger, False) | result
 
     def _generate_targets_repo(self):
         workers = [threading.Thread(target=self.__targets_repo_th, args=(t, )) for t in self.targets_all]
