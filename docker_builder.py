@@ -483,7 +483,7 @@ class SystemD:
         self._files = ['{}.service'.format(f_name), '{}.timer'.format(f_name)]
         self._systemd_path = '/etc/systemd/system/'
         self._path = {
-            '_TIME_': '6h',
+            '_TIME_': '72h',
             '_PARAMS_': self._get_params_str(),
             '_MAIN_': os.path.abspath(sys.argv[0]),
             '_NAME_': name
