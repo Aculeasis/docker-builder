@@ -10,7 +10,6 @@ import time
 
 import docker  # pip3 install docker
 import requests  # pip3 install requests
-from docker.errors import BuildError
 
 # TODO: Обработка зависимостей, например 'depends'=[] список зависимостей типа индекс\имя, индекс\имя. Хз как лучше.
 # TODO: Переписать работу с докером с subprocess на docker
@@ -40,16 +39,14 @@ class Build(threading.Thread):
 
     def run(self):
         client = docker.from_env()
-        work_time = time.time()
+        work_time, _status = time.time(), 0
         try:
             client.images.build(tag=self.tag, dockerfile=self._path, path=self._w_dir, rm=True, nocache=True)
-        except (TypeError, BuildError)as e:
+        except Exception as e:
             self.err = str(e)
             _status = 1
-        else:
-            _status = 0
-        self.work_time = int(time.time() - work_time)
-        self._status = _status
+        finally:
+            self.work_time, self._status = int(time.time() - work_time), _status
 
 
 class Push(threading.Thread):
@@ -67,21 +64,69 @@ class Push(threading.Thread):
 
     def run(self):
         client = docker.from_env()
-        work_time = time.time()
-        _status = None
+        work_time, _status = time.time(), None
         for retry in range(1, 5):
             try:
                 self.err = client.images.push(repository=self._repository, tag=self._tag)
             except requests.exceptions.ConnectionError as e:
                 print('Error push {}:{}. Retry {}. MSG: {}'.format(self._repository, self._tag, retry, e))
+            except Exception as e:
+                self.err = str(e)
+                _status = 1
+                break
             else:
                 _status = 0
                 break
         if _status is None:
             self.err += ' socket error'
             _status = 1
-        self.work_time = int(time.time() - work_time)
-        self._status = _status
+        self.work_time, self._status = int(time.time() - work_time), _status
+
+
+class ManifestPush(threading.Thread):
+    """docker manifest rm aculeasis/rhvoice-rest:latest
+       docker manifest create \
+        aculeasis/rhvoice-rest:latest \
+        -a aculeasis/rhvoice-rest:amd64 \
+        -a aculeasis/rhvoice-rest:arm32v7 \
+        -a aculeasis/rhvoice-rest:arm64v8
+        docker manifest push aculeasis/rhvoice-rest:latest"""
+    def __init__(self, target: str, tags: list):
+        super().__init__()
+        self.tag = '{}:latest'.format(target)
+        self.targets = []
+        for i in tags:
+            self.targets.extend(['-a', '{}:{}'.format(target, i)])
+        self._status = None
+        self.err = ''
+        self.work_time = 0
+        self.start()
+
+    def status(self):
+        return self._status
+
+    def _call(self, cmd: str, args: list):
+        run = subprocess.run(
+            ['docker', 'manifest', cmd, self.tag] + args,
+            stderr=subprocess.PIPE,
+            stdout=subprocess.PIPE
+        )
+        if run.returncode:
+            return run.returncode, '{} "{}" {}'.format(cmd, args, run.stderr.decode())
+        return 0, ''
+
+    def run(self):
+        work_time, _status = time.time(), 0
+        try:
+            self._call('rm', [])
+            _status, self.err = self._call('create', self.targets)
+            if not _status:
+                _status, self.err = self._call('push', [])
+        except Exception as e:
+            self.err = str(e)
+            _status = 1
+        finally:
+            self.work_time, self._status = int(time.time() - work_time), _status
 
 
 def _get_arch() -> str:
@@ -95,10 +140,10 @@ def _get_arch_from_dockerfile(path) -> str:
         raise RuntimeError('File not found {}'.format(path))
     aarch = ['amd64', 'arm64v8', 'arm32v7']
     with open(path, encoding='utf8') as f:
-        for l in f.readlines():
-            if l.startswith('FROM'):
+        for i in f.readlines():
+            if i.startswith('FROM'):
                 for test in aarch:
-                    if test in l.lower():
+                    if test in i.lower():
                         return test
                 return ''
     return ''
@@ -189,7 +234,7 @@ def __docker_run_fatal(cmd2: list, fatal: bool = True):
 def _docker_login(cfg):
     # Читаем логин пасс из файла и логинимся.
     with open(cfg['credentials'], encoding='utf8') as f:
-        data = [l.strip() for l in f.readline().strip('\n').split(' ', 1)]
+        data = [i.strip() for i in f.readline().strip('\n').split(' ', 1)]
     if len(data) != 2:
         raise RuntimeError('Bad credentials, file {}, len={}!=2'.format(cfg['credentials'], len(data)))
     run = subprocess.run(
@@ -261,6 +306,7 @@ class GenerateBuilds:
         self.filled_triggers = {}
         self.to_build = []
         self.all_build_name = set()
+        self.manifests = dict()
         # Не дублировать репозитории. Если реп уже обновлен используем его и его данные для других. Уникальный id - url
         # Формат 'url': {dir: dir, files: [] or None}
         self.known_repos = {}
@@ -287,7 +333,7 @@ class GenerateBuilds:
         if len(print_allow):
             print()
             print('\n'.join(print_allow))
-        return return_me
+        return return_me, self.manifests
 
     def _triggers_check(self, files: list, change_files: list or None):
         if change_files is None:
@@ -403,6 +449,8 @@ class GenerateBuilds:
         is_triggered, triggered_of = self._git_triggers_check(target.get('triggers', []), self.filled_triggers)
         is_change = self.cfg['force'] or is_file_change or is_triggered
         main_name = '{}/{}'.format(self.cfg['user'], target['registry']) if self.cfg['user'] else target['registry']
+        if target.get('manifest') and target['build']:
+            self.manifests[main_name] = target['manifest']
         for build in target['build']:
             dockerfile_change = change_files is not None and build[0] in change_files
             is_change |= dockerfile_change

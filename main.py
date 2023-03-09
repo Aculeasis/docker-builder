@@ -48,6 +48,8 @@ TARGETS = [
              # Если просто * - изменение любого файла
              # * в конце - любой файл начинающийся с (пути без начального слеша). 'src*' in 'src/main.py' - > True
              'registry': 'mdmt2', 'triggers': ['crutch.py', 'entrypoint.sh', '*mdmt2'],
+             # Создаст и запушит универсальный тег latest, очень криво и будет ломаться если теги обновляемые (наверное)
+             'manifest': [],
              # build: список из списков [файл докера, тег].
              # Добавлять докерфайлы в triggers не нужно.
              # В теге возможны подстановки, см. DEF_TAGS.
@@ -72,6 +74,7 @@ TARGETS = [
      'targets': [
          {
              'registry': 'rhvoice-rest', 'triggers': ['*rhv', '*rhv_dict'],
+             'manifest': ['amd64', 'arm64v8', 'arm32v7'],
              'build': [
                  ['Dockerfile.amd64',   '{arch}'],
                  ['Dockerfile.arm64v8', '{arch}'],
@@ -98,6 +101,7 @@ TARGETS = [
      'targets': [
          {
              'registry': 'vosk-rest', 'triggers': ['app.py', 'entrypoint.sh'],
+             'manifest': ['amd64', 'arm64v8', 'arm32v7'],
              'build': [
                  ['Dockerfile.amd64', '{arch}'],
                  ['Dockerfile.arm64v8', '{arch}'],
@@ -149,12 +153,16 @@ class Builder:
         self.builded = []
         self.pushing = []
         self.pushed = []
+        self.manifests_pushing = []
+        self.manifests = {}
 
     def start(self):
         if self.install is not None:
             docker_builder.SystemD(self.install)
             return
-        self.to_build = docker_builder.GenerateBuilds(self.cfg, self.targets, self.git_triggers, self.args).get()
+        self.to_build, self.manifests = docker_builder.GenerateBuilds(
+            self.cfg, self.targets, self.git_triggers, self.args
+        ).get()
         if len(self.to_build) and not self.args.nope:
             work_time = docker_builder.docker_prune(self.to_build)
             if self.args.v:
@@ -173,24 +181,38 @@ class Builder:
             self.add_new_build()
             self.add_new_push()
             if self.cfg['remove_fast']:
-                self.remove_check()
+                self.pushed_check()
             time.sleep(5)
         self.push()
+        self.manifests_check()
 
     def push(self):
         while self.cfg['auto_push'] and (len(self.builded) or len(self.pushing)):
             self.push_check()
             self.add_new_push()
             if self.cfg['remove_fast']:
-                self.remove_check()
+                self.pushed_check()
             time.sleep(5)
-        self.remove_check()
+        self.pushed_check()
 
-    def remove_check(self):
-        while self.cfg['remove_after_push'] and self.cfg['auto_push'] and len(self.pushed):
+    def pushed_check(self):
+        while self.cfg['auto_push'] and len(self.pushed):
             target = self.pushed.pop(0)
-            print('Remove {}'.format(target))
-            docker_builder.docker_prune_image(target, False)
+            if self.cfg['remove_after_push']:
+                print('Remove {}'.format(target))
+                docker_builder.docker_prune_image(target, False)
+            self.add_new_manifest_push(target)
+
+    def manifests_check(self):
+        results = []
+        while self.manifests_pushing:
+            self._x_check(self.manifests_pushing, results, 'Manifest')
+            time.sleep(1)
+
+    def add_new_manifest_push(self, target: str):
+        target = target.split(':', 1)[0]
+        if target in self.manifests:
+            self.manifests_pushing.append(docker_builder.ManifestPush(target, self.manifests[target]))
 
     def add_new_build(self):
         while len(self.building) < self.cfg['max_build_t'] and len(self.to_build):
