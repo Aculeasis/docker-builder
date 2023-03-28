@@ -49,7 +49,7 @@ TARGETS = [
              # * в конце - любой файл начинающийся с (пути без начального слеша). 'src*' in 'src/main.py' - > True
              'registry': 'mdmt2', 'triggers': ['crutch.py', 'entrypoint.sh', '*mdmt2'],
              # Создаст и запушит универсальный тег latest, очень криво и будет ломаться если теги обновляемые (наверное)
-             'manifest': [],
+             'manifest': ['amd64', 'arm64v8', 'arm32v7'],
              # build: список из списков [файл докера, тег].
              # Добавлять докерфайлы в triggers не нужно.
              # В теге возможны подстановки, см. DEF_TAGS.
@@ -59,14 +59,6 @@ TARGETS = [
                  ['Dockerfile.arm32v7', '{arch}'],
              ]
           },
-         {
-             'registry': 'mdmt2_rhvoice', 'triggers': ['crutch.py', 'entrypoint.sh', '*mdmt2', '*rhv_dict', '*rhv'],
-             'build': [
-                 ['Dockerfile_rhvoice.amd64',   '{arch}'],
-                 ['Dockerfile_rhvoice.arm64v8', '{arch}'],
-                 ['Dockerfile_rhvoice.arm32v7', '{arch}']
-             ]
-         },
      ]
      },
     {'git': 'https://github.com/Aculeasis/rhvoice-rest',
